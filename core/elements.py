@@ -1,5 +1,7 @@
+from pathlib import Path
 import json
 from math import sqrt
+from scipy.constants import c
 import matplotlib.pyplot as plt
 
 
@@ -20,7 +22,7 @@ class SignalInformation:
         self.latency += inc_latency
 
     def path_update(self):
-        del self.path[0]
+        self.path[:] = self.path[1:]
 
 
 class Node:
@@ -36,7 +38,7 @@ class Node:
         if len(signal_information.path) > 1:
             line_label = path[:2]
             line = self.successive[line_label]
-            path.path_update()  # delete path[0]
+            signal_information.path_update()  # delete path[0]
             signal_information = line.propagate(signal_information)
         return signal_information
 
@@ -49,7 +51,7 @@ class Line:
 
     def latency_generation(self):
         # propagation velocity (2/3 c)
-        latency = self.length / 2e8
+        latency = self.length / (2/3 * c)
         return latency
 
     def noise_generation(self, signal_power):
@@ -99,7 +101,7 @@ class Network:
                 line_dict['length'] = sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
                 self.lines[line_label] = Line(line_dict)
 
-    def connect(self):
+    def connect(self):  # method to initialize successive elements in lines and nodes
         # take nodes and lines dictionaries from self to iterate over them
         node_dict = self.nodes
         line_dict = self.lines
@@ -111,7 +113,7 @@ class Network:
                 line.successive[connected_node_label] = node_dict[connected_node_label]
                 node.successive[line_label] = line_dict[line_label]
 
-    def find_paths(self, label1, label2):
+    def find_paths(self, label1, label2):  # find all possible paths from one node1 to node2 passing max 1 time per node
         available_nodes = [key for key in self.nodes.keys() if ((key != label1) & (key != label2))]  # crossable nodes
         available_lines = self.lines.keys()  # all the lines
         possible_paths = {'0': label1}
@@ -129,19 +131,19 @@ class Network:
                     paths.append(path + label2)
         return paths
 
-    def propagate(self, signal_information):
+    def propagate(self, signal_information):  # propagate signal info through specified path.
         first_node_label = signal_information.path[0]
         first_node = self.nodes[first_node_label]
         updated_s_information = first_node.propagate(signal_information)  # method from Node object
         return updated_s_information
 
-    def draw(self):
+    def draw(self):  # Name speaks for itself
         nodes_dict = self.nodes
         for node_label in nodes_dict:
             n0 = nodes_dict[node_label]
             x0 = n0.position[0]
             y0 = n0.position[1]
-            plt.plot(x0, y0, 'bo', markersize=6)
+            plt.plot(x0, y0, 'ro', markersize=10)
             plt.text(x0, y0, node_label)
             for connected_node_label in n0.connected_nodes:
                 n1 = nodes_dict[connected_node_label]
