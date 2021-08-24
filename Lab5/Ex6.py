@@ -17,7 +17,7 @@ x_sample = []
 latencies = []
 connection_list = []
 
-for i in range(100):  # Generate the random connections
+for i in range(30):  # Generate the random connections
     rand_pair = random.sample(node_labels, 2)
     connection_list.append(Connection(rand_pair[0], rand_pair[1], 1))
     x_sample.append(int(i))

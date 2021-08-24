@@ -1,12 +1,10 @@
 from pandas import DataFrame
-from core.conversions import lin2db
-from core.conversions import path_str2arrow
-from core.conversions import path_arrow2str
+from core.conversions import lin2db, path_str2arrow, path_arrow2str
 import json
-from math import sqrt
-from math import log10
+from math import sqrt, log10
 from scipy.constants import c
 import matplotlib.pyplot as plt
+from numpy import array, zeros, ones
 from pathlib import Path
 
 
@@ -36,6 +34,7 @@ class Node:
         self.position = node_dict['position']
         self.connected_nodes = node_dict['connected_nodes']
         self.successive = dict()
+        self.switching_matrix = None
 
     def propagate(self, signal_information):
         path = signal_information.path
@@ -138,13 +137,7 @@ class Network:
         for path in all_paths:
             channel_dict = dict()
             for j in range(self.channels):
-                channel = self.path_available(path, j)
-                if channel != -1:
-                    self.free_path(path, j)
-                    channel_dict[j] = 'free'
-                else:
-                    self.occupy_path(path, j)
-                    channel_dict[j] = 'occupied'
+                channel_dict[j] = 'free'
             index_list.append(path)
             channel_list_of_dicts.append(channel_dict)
 
@@ -166,6 +159,18 @@ class Network:
                 line = line_dict[line_label]
                 line.successive[connected_node_label] = node_dict[connected_node_label]
                 node.successive[line_label] = line_dict[line_label]
+
+        # Now it also initializes the switching matrix
+        switching_matrix = dict()
+        for input_node in node_dict:
+            input_node_dict = dict()
+            for output_node in node_dict:
+                if input_node == output_node:
+                    input_node_dict[output_node] = zeros(self.channels)
+                else:
+                    input_node_dict[output_node] = ones(self.channels)
+            switching_matrix[input_node] = input_node_dict
+            self.nodes[input_node].switching_matrix = switching_matrix[input_node]
 
     def find_paths(self, label1, label2):  # find all possible paths from one node1 to node2 passing max 1 time per node
         available_nodes = [key for key in self.nodes.keys() if ((key != label1) & (key != label2))]  # crossable nodes
@@ -324,7 +329,7 @@ class Network:
         for i in range(len(path) - 1):
             line_labels.append(path[i] + path[i + 1])
 
-        for i in range(channel, self.channels):  # If one channel is passed, check will start from that one on
+        for i in range(channel, self.channels):  # If one specific channel is passed, check will start from that one on
             for line_label in line_labels:
                 line = self.lines[line_label]
                 if line.state[i] == 'occupied':
@@ -350,6 +355,34 @@ class Network:
             line.state[channel] = 'free'
 
     def update_route_space(self):
+        all_paths = self.compute_all_paths()
+        #  With all the possible paths, start the method
+        channel_list_of_dicts = []
+        index_list = []
+
+        for path in all_paths:
+            channel_dict = dict()
+
+            for i in range(len(path) - 1):
+                line_label = path[i] + path[i + 1]
+                in_node_label = path[i]
+                in_node = self.nodes[in_node_label]
+                out_node_label = path[i + 1]
+                for j in range(self.channels):
+                    current_state = self.lines[line_label].state[j]
+                    if current_state == 'occupied':
+                        current_state = 0
+                    else:
+                        current_state = 1
+                    adj_matrix_entry = in_node.switching_matrix[out_node_label][j]
+                    channel_dict[j] = current_state * adj_matrix_entry # AND operation (line state * s. matrix entry)
+
+            index_list.append(path)
+            channel_list_of_dicts.append(channel_dict)
+
+        self.route_space = DataFrame(channel_list_of_dicts, index_list)
+
+    def compute_all_paths(self):
         all_pairs = []
         all_paths = []
         node_dict = self.nodes
@@ -361,23 +394,7 @@ class Network:
             possible_paths = self.find_paths(pair[0], pair[1])
             for path in possible_paths:
                 all_paths.append(path)
-
-        #  With all the possible paths, start the method
-        channel_list_of_dicts = []
-        index_list = []
-
-        for path in all_paths:
-            channel_dict = dict()
-            for j in range(self.channels):
-                channel = self.path_available(path, j)
-                if channel == j:
-                    channel_dict[j] = 'free'
-                else:
-                    channel_dict[j] = 'occupied'
-            index_list.append(path)
-            channel_list_of_dicts.append(channel_dict)
-
-        self.route_space = DataFrame(channel_list_of_dicts, index_list)
+        return all_paths
 
 
 class Connection:
