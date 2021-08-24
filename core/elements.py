@@ -170,7 +170,7 @@ class Network:
                 else:
                     input_node_dict[output_node] = ones(self.channels)
             switching_matrix[input_node] = input_node_dict
-            self.nodes[input_node].switching_matrix = switching_matrix[input_node]
+            self.nodes[input_node].switching_matrix = switching_matrix
 
     def find_paths(self, label1, label2):  # find all possible paths from one node1 to node2 passing max 1 time per node
         available_nodes = [key for key in self.nodes.keys() if ((key != label1) & (key != label2))]  # crossable nodes
@@ -363,19 +363,23 @@ class Network:
         for path in all_paths:
             channel_dict = dict()
 
-            for i in range(len(path) - 1):
-                line_label = path[i] + path[i + 1]
-                in_node_label = path[i]
-                in_node = self.nodes[in_node_label]
-                out_node_label = path[i + 1]
-                for j in range(self.channels):
+            for j in range(self.channels):
+                channel_availability = 1  # Initialization of availability
+                for i in range(len(path) - 1):
+                    line_label = path[i] + path[i + 1]
+                    in_node_label = path[i]
+                    in_node = self.nodes[in_node_label]
+                    out_node_label = path[i + 1]
                     current_state = self.lines[line_label].state[j]
                     if current_state == 'occupied':
                         current_state = 0
                     else:
                         current_state = 1
-                    adj_matrix_entry = in_node.switching_matrix[out_node_label][j]
-                    channel_dict[j] = current_state * adj_matrix_entry # AND operation (line state * s. matrix entry)
+                    adj_matrix_entry = in_node.switching_matrix[in_node_label][out_node_label][j]
+                    # AND operation (line state * s. matrix entry)
+                    channel_availability *= adj_matrix_entry * current_state
+
+                channel_dict[j] = channel_availability  # After checking all the lines and corresponding switching m.
 
             index_list.append(path)
             channel_list_of_dicts.append(channel_dict)
