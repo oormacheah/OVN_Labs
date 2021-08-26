@@ -1,9 +1,9 @@
 from pandas import DataFrame
 from core.conversions import lin2db, db2lin, path_str2arrow, path_arrow2str
-from scipy.special import erfcinv, erfc
+from scipy.special import erfcinv
 import json
-from math import sqrt, log10, log2
-from scipy.constants import c
+from math import sqrt, log10, log2, floor
+from scipy.constants import c, h, e, pi
 import matplotlib.pyplot as plt
 from numpy import array, zeros, ones
 from pathlib import Path
@@ -57,16 +57,46 @@ class Line:
         self.label = line_dict['label']
         self.length = line_dict['length']
         self.successive = {}
-        self.state = ['free' for i in range(n_channels)]
+        self.n_channels = n_channels
+        self.state = ['free' for i in range(self.n_channels)]
+        self.n_amplifiers = floor(self.length / 80e3)
+        self.gain = 16  # For each amplifier (in dB)
+        self.noise_figure = 3  # For each amplifier (in dB)
+
+        # Fiber parameters
+        self.alpha_db = -0.2e-3  # [dB/m]
+        self.beta2 = 2.13e-26  # [m Hz^2]^-1
+        self.gamma = 1.27e-3  # [m W]^-1
+        self.rs = 32e9  # Symbol rate [Hz]
+        self.df = 50e9  # Spacing between consecutive channels [Hz]
+        self.alpha = self.alpha_db / (20 * log10(e))
+        self.l_eff = 1 / (2 * self.alpha)
 
     def latency_generation(self):
         # propagation velocity (2/3 c)
-        latency = self.length / (2/3 * c)
+        latency = self.length / (2 / 3 * c)
         return latency
 
     def noise_generation(self, signal_power):
         noise = 1e-9 * signal_power * self.length
         return noise
+
+    def ase_generation(self):
+        f = 193.414e12  # C-band center
+        bn = 12.5e9  # Noise bandwidth
+        nf_linear = db2lin(self.noise_figure)
+        g = db2lin(self.gain)
+        ase = self.n_amplifiers * (h * f * bn * nf_linear * (g - 1))
+        return ase
+
+    def nli_generation(self, power_per_channel):
+        bn = 12.5e9  # Noise bandwidth
+        eta_nli = ((16 / (27 * pi)) * log10(((pi ** 2) / 2) *
+                   ((self.beta2 * (self.rs ** 2)) / self.alpha) *
+                   (self.n_channels ** (2 * (self.rs / self.df)))) *
+                   ((self.gamma ** 2) / (4 * self.alpha * self.beta2)) * (1 / (self.rs ** 3)))
+        nli = (power_per_channel ** 3) * eta_nli * self.n_amplifiers * bn
+        return nli
 
     def propagate(self, signal_information):
         # add latency
@@ -78,8 +108,16 @@ class Line:
         noise_power = self.noise_generation(signal_power)
         signal_information.add_noise_power(noise_power)
 
+        # add ASE
+        ase = self.ase_generation()
+        signal_information.add_noise_power(ase)
+
+        # add NLI
+        nli = self.nli_generation(signal_information.signal_power)
+        signal_information.add_noise_power(nli)
+
         # propagate (recursive)
-        if isinstance(signal_information, LightPath):
+        if isinstance(signal_information, LightPath):  # weigh_paths method uses SignalInformation class
             self.state[signal_information.channel] = 'occupied'
         node_label = self.successive[signal_information.path[0]]
         signal_information = node_label.propagate(signal_information)
@@ -98,8 +136,8 @@ class Network:
 
         for node_key in json_nodes:
             # instantiate nodes
-            node_dict = json_nodes[node_key]   # each json_node_key value is a dict (containing pos and connected nodes)
-            node_dict['label'] = node_key      # manually add key-value pair because it's not in json file
+            node_dict = json_nodes[node_key]  # each json_node_key value is a dict (containing pos and connected nodes)
+            node_dict['label'] = node_key  # manually add key-value pair because it's not in json file
             self.nodes[node_key] = Node(node_dict)
             for connected_node_label in node_dict['connected_nodes']:
                 line_dict = {}
@@ -412,7 +450,7 @@ class Network:
         rs = 32e9  # Symbol rate of lightpath in Hz (assumed)
         bn = 12.5e9  # Noise bandwidth in Hz (assumed)
         path_arrow = path_str2arrow(path)  # Use arrow notation to index the dataframe
-        gsnr_db = self.weighted_paths.loc[path_arrow]['SNR']
+        gsnr_db = self.weighted_paths.loc[path_arrow]['SNR']  # Take data from weighted paths
         gsnr = db2lin(gsnr_db)
 
         if strategy == 'fixed_rate':
@@ -458,4 +496,5 @@ class LightPath(SignalInformation):
     def __init__(self, s_power, path, channel=0):  # This call overrides SignalInformation class __init__
         super().__init__(s_power, path)  # Call __init__ from parent class SignalInformation
         self.channel = channel
-
+        self.rs = 32e9
+        self.df = 50e9

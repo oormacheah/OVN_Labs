@@ -8,9 +8,10 @@ from core.elements import Connection
 root = Path(__file__).parents[1]
 json_path = root / 'Resources' / 'nodes_full_fixed_rate.json'
 
+input_signal_power = 1e-3  # To compute weighted graph and establish the connections
 network = Network(json_path)
 network.connect()
-network.weighted_paths = network.weigh_paths(1)
+network.weighted_paths = network.weigh_paths(input_signal_power)  # Watts
 
 node_labels = list(network.nodes.keys())
 x_sample = []
@@ -20,7 +21,7 @@ n_connections = 100
 
 for i in range(n_connections):  # Generate the random connections
     rand_pair = random.sample(node_labels, 2)
-    connection_list.append(Connection(rand_pair[0], rand_pair[1], 1))
+    connection_list.append(Connection(rand_pair[0], rand_pair[1], input_signal_power))
     x_sample.append(int(i))
     print(rand_pair)
 
@@ -44,5 +45,5 @@ plt.hist(bit_rates)
 plt.xlabel('Rb')
 plt.ylabel('Coincidences')
 plt.grid(True)
-plt.title('Bit Rate for i-th sample')
+plt.title('Bit Rate occurrences')
 plt.show()
