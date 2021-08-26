@@ -1,7 +1,8 @@
 from pandas import DataFrame
-from core.conversions import lin2db, path_str2arrow, path_arrow2str
+from core.conversions import lin2db, db2lin, path_str2arrow, path_arrow2str
+from scipy.special import erfcinv, erfc
 import json
-from math import sqrt, log10
+from math import sqrt, log10, log2
 from scipy.constants import c
 import matplotlib.pyplot as plt
 from numpy import array, zeros, ones
@@ -35,6 +36,10 @@ class Node:
         self.connected_nodes = node_dict['connected_nodes']
         self.successive = dict()
         self.switching_matrix = None
+        if 'transceiver' in node_dict:
+            self.transceiver = node_dict['transceiver']
+        else:
+            self.transceiver = 'fixed_rate'
 
     def propagate(self, signal_information):
         path = signal_information.path
@@ -142,7 +147,6 @@ class Network:
             channel_list_of_dicts.append(channel_dict)
 
         self.route_space = DataFrame(channel_list_of_dicts, index_list)
-        print(self.route_space)
 
     # END OF CONSTRUCTOR
 
@@ -202,7 +206,7 @@ class Network:
             n0 = nodes_dict[node_label]
             x0 = n0.position[0]
             y0 = n0.position[1]
-            plt.plot(x0, y0, 'ro', markersize=10)
+            plt.plot(x0, y0, 'ro', markersize=7)
             plt.text(x0, y0, node_label)
             for connected_node_label in n0.connected_nodes:
                 n1 = nodes_dict[connected_node_label]
@@ -243,6 +247,7 @@ class Network:
         df['Latency'] = latencies
         df['Noise'] = noise_powers
         df['SNR'] = snrs
+        df.set_index('Path', inplace=True)  # Performed changes to make path the actual index
 
         return df
 
@@ -255,23 +260,14 @@ class Network:
 
         modified_paths = [path_str2arrow(path) for path in paths]  # Convert to arrow paths
 
-        for i in range(len(wp_df['Path'])):
-            path = wp_df['Path'][i]
-            if (path in modified_paths) & (wp_df['SNR'][i] > highest_snr):
+        for path in modified_paths:
+            if wp_df.loc[path]['SNR'] > highest_snr:
                 available_channel = self.path_available(path_arrow2str(path))  # Check availability of the path
                 if available_channel != -1:
-                    highest_snr = wp_df['SNR'][i]
-                    best_path = path_arrow2str(wp_df['Path'][i])
+                    highest_snr = wp_df.loc[path]['SNR']
+                    best_path = path_arrow2str(wp_df.loc[path].name)
                     channel = available_channel
         return best_path, channel
-
-    def find_best_snr2(self, label1, label2):  # Does the same as find_best_snr but uses pandas methods more compactly
-        wp_df = self.weighted_paths
-        ok_df = wp_df[wp_df['Path'].str.startswith(label1) & wp_df['Path'].str.endswith(label2)]  # captures OK dfs
-        # having starting node label1 and ending node label2
-
-        best_snr_frame = ok_df.loc[ok_df['SNR'].idxmax()]
-        return path_arrow2str(best_snr_frame['Path'])
 
     def find_best_latency(self, label1, label2):  # Will return best path and channel used
         best_path = None
@@ -282,21 +278,14 @@ class Network:
 
         modified_paths = [path_str2arrow(path) for path in paths]  # Convert to arrow paths
 
-        for i in range(len(wp_df['Path'])):
-            path = wp_df['Path'][i]
-            if (path in modified_paths) & (wp_df['Latency'][i] < lowest_latency):
+        for path in modified_paths:
+            if wp_df.loc[path]['Latency'] < lowest_latency:
                 available_channel = self.path_available(path_arrow2str(path))
                 if available_channel != -1:  # Check availability of the path
-                    lowest_latency = wp_df['Latency'][i]
-                    best_path = path_arrow2str(wp_df['Path'][i])
+                    lowest_latency = wp_df.loc[path]['Latency']
+                    best_path = path_arrow2str(wp_df.loc[path].name)
                     channel = available_channel
         return best_path, channel
-
-    def find_best_latency2(self, label1, label2):
-        wp_df = self.weighted_paths
-        ok_df = wp_df[wp_df['Path'].str.startswith(label1) & wp_df['Path'].str.endswith(label2)]
-        best_latency_frame = ok_df.loc[ok_df['Latency'].idxmin()]
-        return path_arrow2str(best_latency_frame['Path'])
 
     def stream(self, connection_list, choice='latency'):
         for connection in connection_list:
@@ -305,23 +294,41 @@ class Network:
                 if best_path_channel[0] is None:
                     connection.snr = 0.0
                     connection.latency = None
+                    connection.bit_rate = 0.0
+                    print(f'conn. {connection.input} to {connection.output} REJECTED due to unavailability')
                 else:
                     signal_information = LightPath(connection.signal_power, best_path_channel[0], best_path_channel[1])
-                    updated_info = self.propagate(signal_information)
-                    connection.latency = updated_info.latency
-                    connection.snr = 10 * (log10(updated_info.signal_power / updated_info.noise_power))
-                print(best_path_channel[0])
+                    first_node = self.nodes[best_path_channel[0][0]]  # (First node of path)
+                    rb = self.calculate_bit_rate(best_path_channel[0], first_node.transceiver)  # Strategy
+                    if rb != 0.0:
+                        updated_info = self.propagate(signal_information)
+                        connection.latency = updated_info.latency
+                        connection.snr = 10 * (log10(updated_info.signal_power / updated_info.noise_power))
+                        connection.bit_rate = rb
+                        print('conn. ACCEPTED through path:', best_path_channel[0], 'channel:', best_path_channel[1])
+                    else:
+                        print('conn. REJECTED through path:', best_path_channel[0], 'channel:', best_path_channel[1])
+
             elif choice == 'latency':
                 best_path_channel = self.find_best_latency(connection.input, connection.output)
                 if best_path_channel[0] is None:
                     connection.snr = 0.0
                     connection.latency = None
+                    connection.bit_rate = 0.0
+                    print(f'conn. {connection.input} to {connection.output} REJECTED due to unavailability')
                 else:
                     signal_information = LightPath(connection.signal_power, best_path_channel[0], best_path_channel[1])
-                    updated_info = self.propagate(signal_information)
-                    connection.latency = updated_info.latency
-                    connection.snr = 10 * (log10(updated_info.signal_power / updated_info.noise_power))
-                print(best_path_channel[0])
+                    first_node = self.nodes[best_path_channel[0][0]]  # (First node of path)
+                    rb = self.calculate_bit_rate(best_path_channel[0], first_node.transceiver)  # Strategy
+                    if rb != 0.0:
+                        updated_info = self.propagate(signal_information)
+                        connection.latency = updated_info.latency
+                        connection.snr = 10 * (log10(updated_info.signal_power / updated_info.noise_power))
+                        connection.bit_rate = rb
+                        print('conn. ACCEPTED through path:', best_path_channel[0], 'channel:', best_path_channel[1])
+                    else:
+                        print('conn. REJECTED through path:', best_path_channel[0], 'channel:', best_path_channel[1])
+
         self.update_route_space()
 
     def path_available(self, path, channel=0):  # Modified for receiving the channel number or -1 if no channel
@@ -338,7 +345,7 @@ class Network:
                     return i
         return -1
 
-    def occupy_path(self, path, channel=0):  # Occupy every line of the path forcedly           (unused method)
+    def occupy_path(self, path, channel=0):  # Occupy every line of the path forcedly               (unused)
         line_labels = []
         for i in range(len(path) - 1):
             line_labels.append(path[i] + path[i + 1])
@@ -346,7 +353,7 @@ class Network:
             line = self.lines[line_label]
             line.state[channel] = 'occupied'
 
-    def free_path(self, path, channel=0):  # Free every line of the path forcedly               (unused method)
+    def free_path(self, path, channel=0):  # Free every line of the path forcedly                   (unused)
         line_labels = []
         for i in range(len(path) - 1):
             line_labels.append(path[i] + path[i + 1])
@@ -379,7 +386,7 @@ class Network:
                     # AND operation (line state * s. matrix entry)
                     channel_availability *= adj_matrix_entry * current_state
 
-                channel_dict[j] = channel_availability  # After checking all the lines and corresponding switching m.
+                channel_dict[j] = int(channel_availability)  # After checking lines and corresponding switching m.
 
             index_list.append(path)
             channel_list_of_dicts.append(channel_dict)
@@ -400,6 +407,42 @@ class Network:
                 all_paths.append(path)
         return all_paths
 
+    def calculate_bit_rate(self, path, strategy):
+        ber_t = 1e-3  # Bit error rate (assumed)
+        rs = 32e9  # Symbol rate of lightpath in Hz (assumed)
+        bn = 12.5e9  # Noise bandwidth in Hz (assumed)
+        path_arrow = path_str2arrow(path)  # Use arrow notation to index the dataframe
+        gsnr_db = self.weighted_paths.loc[path_arrow]['SNR']
+        gsnr = db2lin(gsnr_db)
+
+        if strategy == 'fixed_rate':
+            threshold = 2 * (erfcinv(2 * ber_t) ** 2) * (rs / bn)
+            if gsnr >= threshold:
+                rb = 100e9  # Bit rate in bps
+            else:
+                rb = 0
+
+        elif strategy == 'flex_rate':
+            threshold = 2 * (erfcinv(2 * ber_t) ** 2) * (rs / bn)
+            threshold1 = (14 / 3) * (erfcinv((3 / 2) * ber_t) ** 2) * (rs / bn)
+            threshold2 = 10 * (erfcinv((8 / 3) * ber_t) ** 2) * (rs / bn)
+            if gsnr < threshold:
+                rb = 0
+            elif (gsnr >= threshold) & (gsnr < threshold1):
+                rb = 100e9
+            elif (gsnr >= threshold1) & (gsnr < threshold2):
+                rb = 200e9
+            else:
+                rb = 400e9
+
+        elif strategy == 'shannon':
+            rb = (2 * rs * log2(1 + (gsnr * (bn / rs))))
+
+        else:
+            rb = 0
+
+        return rb
+
 
 class Connection:
     def __init__(self, in_label, out_label, signal_power):
@@ -408,6 +451,7 @@ class Connection:
         self.signal_power = signal_power
         self.latency = 0.0
         self.snr = 0.0
+        self.bit_rate = 0.0
 
 
 class LightPath(SignalInformation):

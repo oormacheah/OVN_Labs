@@ -6,7 +6,7 @@ from core.elements import Connection
 
 
 root = Path(__file__).parents[1]
-json_path = root / 'Lab3' / 'nodes.json'
+json_path = root / 'Resources' / 'nodes.json'
 
 network = Network(json_path)
 network.connect()
