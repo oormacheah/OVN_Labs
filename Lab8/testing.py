@@ -6,9 +6,9 @@ from core.elements import Connection
 
 
 root = Path(__file__).parents[1]
-json_path = root / 'Resources' / 'nodes_full_fixed_rate.json'
+json_path = root / 'Resources' / 'nodes_full_flex_rate.json'
 
-input_signal_power = 1e-3  # To compute weighted graph and establish the connections
+input_signal_power = 1  # To compute weighted graph and establish the connections
 network = Network(json_path)
 network.connect()
 network.weighted_paths = network.weigh_paths(input_signal_power)  # Watts
@@ -16,7 +16,7 @@ network.weighted_paths = network.weigh_paths(input_signal_power)  # Watts
 node_labels = list(network.nodes.keys())
 x_sample = []
 connection_list = []
-n_connections = 100
+n_connections = 500
 
 
 for i in range(n_connections):  # Generate the random connections
@@ -43,7 +43,7 @@ print('Total capacity used :', '{:e}'.format(tot_capacity))
 plt.figure()
 plt.hist(bit_rates)
 plt.xlabel('Rb')
-plt.ylabel('Coincidences')
+plt.ylabel('Occurrences')
 plt.grid(True)
 plt.title('Bit Rate occurrences')
 plt.show()

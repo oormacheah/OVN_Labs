@@ -5,8 +5,8 @@ import json
 from math import sqrt, log10, log2, floor
 from scipy.constants import c, h, e, pi
 import matplotlib.pyplot as plt
-from numpy import array, zeros, ones
-from pathlib import Path
+from numpy import array, zeros, ones, cbrt
+import random
 
 
 class SignalInformation:
@@ -47,6 +47,7 @@ class Node:
         if len(signal_information.path) > 1:
             line_label = path[:2]
             line = self.successive[line_label]
+            signal_information.signal_power = line.optimized_launch_power()
             signal_information.path_update()  # delete path[0]
             signal_information = line.propagate(signal_information)
         return signal_information
@@ -61,11 +62,11 @@ class Line:
         self.state = ['free' for i in range(self.n_channels)]
         self.n_amplifiers = floor(self.length / 80e3)
         self.gain = 16  # For each amplifier (in dB)
-        self.noise_figure = 3  # For each amplifier (in dB)
+        self.noise_figure = 3  # For each amplifier (in dB)  (try 5dB for Lab9)
 
         # Fiber parameters
         self.alpha_db = -0.2e-3  # [dB/m]
-        self.beta2 = 2.13e-26  # [m Hz^2]^-1
+        self.beta2 = 2.13e-26  # [m Hz^2]^-1  (try 0.6e-26 for Lab9)
         self.gamma = 1.27e-3  # [m W]^-1
         self.rs = 32e9  # Symbol rate [Hz]
         self.df = 50e9  # Spacing between consecutive channels [Hz]
@@ -78,7 +79,9 @@ class Line:
         return latency
 
     def noise_generation(self, signal_power):
-        noise = 1e-9 * signal_power * self.length
+        noise_ase = self.ase_generation()
+        noise_nli = self.nli_generation(signal_power)
+        noise = noise_ase + noise_nli
         return noise
 
     def ase_generation(self):
@@ -103,18 +106,10 @@ class Line:
         latency = self.latency_generation()  # generated the latency (proper for the line)
         signal_information.add_latency(latency)
 
-        # add noise
+        # add ASE and NLI
         signal_power = signal_information.signal_power
         noise_power = self.noise_generation(signal_power)
         signal_information.add_noise_power(noise_power)
-
-        # add ASE
-        ase = self.ase_generation()
-        signal_information.add_noise_power(ase)
-
-        # add NLI
-        nli = self.nli_generation(signal_information.signal_power)
-        signal_information.add_noise_power(nli)
 
         # propagate (recursive)
         if isinstance(signal_information, LightPath):  # weigh_paths method uses SignalInformation class
@@ -122,6 +117,17 @@ class Line:
         node_label = self.successive[signal_information.path[0]]
         signal_information = node_label.propagate(signal_information)
         return signal_information
+
+    def optimized_launch_power(self):
+        eta_nli = ((16 / (27 * pi)) * log10(((pi ** 2) / 2) *
+                                            ((self.beta2 * (self.rs ** 2)) / self.alpha) *
+                                            (self.n_channels ** (2 * (self.rs / self.df)))) *
+                   ((self.gamma ** 2) / (4 * self.alpha * self.beta2)) * (1 / (self.rs ** 3)))
+        nf = db2lin(self.noise_figure)  # in linear
+        f0 = 193.414e12  # C-band frequency
+        loss = self.alpha * self.length
+        p_opt = cbrt((nf * loss * h * f0) / (2 * eta_nli))
+        return p_opt
 
 
 class Network:
@@ -333,7 +339,7 @@ class Network:
                     connection.snr = 0.0
                     connection.latency = None
                     connection.bit_rate = 0.0
-                    print(f'conn. {connection.input} to {connection.output} REJECTED due to unavailability')
+                    print(f'conn. {connection.input} to {connection.output} REJECTED (unavailable light paths)')
                 else:
                     signal_information = LightPath(connection.signal_power, best_path_channel[0], best_path_channel[1])
                     first_node = self.nodes[best_path_channel[0][0]]  # (First node of path)
@@ -343,9 +349,13 @@ class Network:
                         connection.latency = updated_info.latency
                         connection.snr = 10 * (log10(updated_info.signal_power / updated_info.noise_power))
                         connection.bit_rate = rb
-                        print('conn. ACCEPTED through path:', best_path_channel[0], 'channel:', best_path_channel[1])
+                        print('conn. accepted through path:', best_path_channel[0], 'channel:', best_path_channel[1])
                     else:
-                        print('conn. REJECTED through path:', best_path_channel[0], 'channel:', best_path_channel[1])
+                        print('conn. REJECTED through path:',
+                              best_path_channel[0], 'channel:',
+                              best_path_channel[1], '-> insufficient GSNR')
+                        # Connection doesn't get deployed (lines and channels are kept free) if rb is 0
+                        # rb 0 means connection didn't satisfy the gsnr threshold in the best AVAILABLE path
 
             elif choice == 'latency':
                 best_path_channel = self.find_best_latency(connection.input, connection.output)
@@ -363,9 +373,11 @@ class Network:
                         connection.latency = updated_info.latency
                         connection.snr = 10 * (log10(updated_info.signal_power / updated_info.noise_power))
                         connection.bit_rate = rb
-                        print('conn. ACCEPTED through path:', best_path_channel[0], 'channel:', best_path_channel[1])
+                        print('conn. accepted through path:', best_path_channel[0], 'channel:', best_path_channel[1])
                     else:
-                        print('conn. REJECTED through path:', best_path_channel[0], 'channel:', best_path_channel[1])
+                        print('conn. REJECTED through path:',
+                              best_path_channel[0], 'channel:',
+                              best_path_channel[1], '-> insufficient GSNR')
 
         self.update_route_space()
 
@@ -466,9 +478,9 @@ class Network:
             threshold2 = 10 * (erfcinv((8 / 3) * ber_t) ** 2) * (rs / bn)
             if gsnr < threshold:
                 rb = 0
-            elif (gsnr >= threshold) & (gsnr < threshold1):
+            elif (gsnr >= threshold) and (gsnr < threshold1):
                 rb = 100e9
-            elif (gsnr >= threshold1) & (gsnr < threshold2):
+            elif (gsnr >= threshold1) and (gsnr < threshold2):
                 rb = 200e9
             else:
                 rb = 400e9
@@ -480,6 +492,52 @@ class Network:
             rb = 0
 
         return rb
+
+    def traffic_matrix_deployment(self, traffic_matrix, blocking_event_limit):
+        # Create dictionary for row, column correspondence to source, destination nodes
+
+        number_node_dict = dict(enumerate(self.nodes.keys()))
+        connection_list = []
+        blocking_events = 0
+        n_successful_connections = 0
+
+        while self.check_finish(traffic_matrix) == 0 and blocking_events < blocking_event_limit:
+            choice_entry = random.sample(list(range(len(traffic_matrix))), 2)  # pair of numbers inside the dimensions
+            rb_requested = traffic_matrix[choice_entry[0]][choice_entry[1]]
+            if rb_requested == 0.0:
+                continue  # Sample entry of the matrix is either on the diagonal or the entry has already been taken
+            node_in_label = number_node_dict[choice_entry[0]]
+            node_out_label = number_node_dict[choice_entry[1]]
+
+            connection = Connection(node_in_label, node_out_label, 1)
+            self.stream([connection], 'snr')  # stream() method accepts list of connections
+            if connection.bit_rate == 0.0:  # Connection couldn't be deployed
+                blocking_events += 1
+            else:
+                n_successful_connections += 1
+            subtraction = rb_requested - connection.bit_rate
+            if subtraction < 0.0:  # Bit rate obtained normally is more than the one requested by matrix entry
+                traffic_matrix[choice_entry[0]][choice_entry[1]] = 0.0
+                connection.bit_rate = rb_requested  # Just deploy the capacity necessary to satisfy request
+            else:
+                traffic_matrix[choice_entry[0]][choice_entry[1]] = subtraction
+            connection_list.append(connection)
+
+        if blocking_events == blocking_event_limit:
+            print(f'\nNetwork saturated: blocking event limit reached ({blocking_event_limit} events)')
+        else:
+            print('\nAll requests satisfied!')
+
+        return connection_list, n_successful_connections
+
+    @staticmethod
+    def check_finish(traffic_matrix):
+        for i in range(len(traffic_matrix)):
+            for j in range(len(traffic_matrix[i])):
+                if i != j:
+                    if traffic_matrix[i][j] != 0.0:
+                        return 0
+        return 1
 
 
 class Connection:
