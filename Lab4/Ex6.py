@@ -8,13 +8,12 @@ from core.elements import Connection
 root = Path(__file__).parents[1]
 json_path = root / 'Resources' / 'nodes.json'
 
-network = Network(json_path)
+network = Network(json_path, 10)
 network.connect()
 network.weighted_paths = network.weigh_paths(1)
 
 node_labels = list(network.nodes.keys())
 x_sample = []
-latencies = []
 connection_list = []
 
 for i in range(100):  # Generate the random connections
@@ -28,20 +27,22 @@ latencies = []
 snrs = []
 
 for connection in connection_list:
-    latencies.append(connection.latency)
-    snrs.append(connection.snr)
+    if connection.snr == 0.0:
+        snrs.append(connection.snr)
+        continue
+    else:
+        latencies.append(connection.latency)
+        snrs.append(connection.snr)
 
 # Plotting
-plt.figure()
-plt.plot(x_sample, latencies)
-plt.xlabel('i-th sample')
-plt.ylabel('Latency')
-plt.title('Latency')
+plt.figure('Latency distribution')
+plt.hist(latencies)
+plt.xlabel('Latency')
+plt.title('Latency distribution')
 
-plt.figure()
-plt.plot(x_sample, snrs)
-plt.xlabel('i-th sample')
-plt.ylabel('SNR')
-plt.title('SNR')
+plt.figure('SNR distribution')
+plt.hist(snrs)
+plt.xlabel('SNR')
+plt.title('SNR distribution')
 
 plt.show()

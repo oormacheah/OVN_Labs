@@ -8,6 +8,6 @@ root = Path(__file__).parents[1]
 json_path = root / 'Resources' / 'nodes.json'
 network = Network(json_path)
 
-best_path = network.find_best_snr2('A', 'F')
+best_path = network.find_best_snr('A', 'F')
 print(network.weighted_paths)
 print(best_path)

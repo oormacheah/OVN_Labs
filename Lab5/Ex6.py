@@ -8,7 +8,7 @@ from core.elements import Connection
 root = Path(__file__).parents[1]
 json_path = root / 'Resources' / 'nodes.json'
 
-network = Network(json_path)
+network = Network(json_path, 10)
 network.connect()
 network.weighted_paths = network.weigh_paths(1)
 
@@ -17,33 +17,33 @@ x_sample = []
 latencies = []
 connection_list = []
 
-for i in range(30):  # Generate the random connections
+for i in range(100):  # Generate the random connections
     rand_pair = random.sample(node_labels, 2)
     connection_list.append(Connection(rand_pair[0], rand_pair[1], 1))
     x_sample.append(int(i))
-    print(rand_pair)
 
 network.stream(connection_list, 'snr')  # You can also choose 'latency'
-print('updated route space:\n', network.route_space)
 
 latencies = []
 snrs = []
 
 for connection in connection_list:
-    latencies.append(connection.latency)
-    snrs.append(connection.snr)
+    if connection.snr == 0.0:
+        snrs.append(connection.snr)
+        continue
+    else:
+        latencies.append(connection.latency)
+        snrs.append(connection.snr)
 
 # Plotting
-plt.figure()
-plt.plot(x_sample, latencies)
-plt.xlabel('i-th sample')
-plt.ylabel('Latency')
-plt.title('Latency')
+plt.figure('Latency distribution')
+plt.hist(latencies)
+plt.xlabel('Latency')
+plt.title('Latency distribution')
 
-plt.figure()
-plt.plot(x_sample, snrs)
-plt.xlabel('i-th sample')
-plt.ylabel('SNR')
-plt.title('SNR')
+plt.figure('SNR distribution')
+plt.hist(snrs)
+plt.xlabel('SNR')
+plt.title('SNR distribution')
 
 plt.show()

@@ -250,7 +250,7 @@ class Network:
             n0 = nodes_dict[node_label]
             x0 = n0.position[0]
             y0 = n0.position[1]
-            plt.plot(x0, y0, 'ro', markersize=7)
+            plt.plot(x0, y0, 'go', markersize=10)
             plt.text(x0, y0, node_label)
             for connected_node_label in n0.connected_nodes:
                 n1 = nodes_dict[connected_node_label]
@@ -351,6 +351,8 @@ class Network:
                         connection.bit_rate = rb
                         print('conn. accepted through path:', best_path_channel[0], 'channel:', best_path_channel[1])
                     else:
+                        connection.latency = None
+                        connection.snr = 0.0
                         print('conn. REJECTED through path:',
                               best_path_channel[0], 'channel:',
                               best_path_channel[1], '-> insufficient GSNR')
