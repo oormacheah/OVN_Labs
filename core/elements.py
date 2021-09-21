@@ -2,8 +2,8 @@ from pandas import DataFrame
 from core.conversions import lin2db, db2lin, path_str2arrow, path_arrow2str
 from scipy.special import erfcinv
 import json
-from math import sqrt, log10, log2, floor
-from scipy.constants import c, h, e, pi
+from math import sqrt, log10, log2, floor, e, log
+from scipy.constants import c, h, pi
 import matplotlib.pyplot as plt
 from numpy import array, zeros, ones, cbrt
 import random
@@ -39,7 +39,7 @@ class Node:
         if 'transceiver' in node_dict:
             self.transceiver = node_dict['transceiver']
         else:
-            self.transceiver = 'fixed_rate'
+            self.transceiver = 'shannon'
 
     def propagate(self, signal_information):
         path = signal_information.path
@@ -60,12 +60,12 @@ class Line:
         self.successive = {}
         self.n_channels = n_channels
         self.state = ['free' for i in range(self.n_channels)]
-        self.n_amplifiers = floor(self.length / 80e3)
+        self.n_amplifiers = floor(self.length / 80e3)  # 80e3 is the length in meters of every fiber span
         self.gain = 16  # For each amplifier (in dB)
         self.noise_figure = 3  # For each amplifier (in dB)  (try 5dB for Lab9)
 
         # Fiber parameters
-        self.alpha_db = -0.2e-3  # [dB/m]
+        self.alpha_db = 0.2e-3  # [dB/m]
         self.beta2 = 2.13e-26  # [m Hz^2]^-1  (try 0.6e-26 for Lab9)
         self.gamma = 1.27e-3  # [m W]^-1
         self.rs = 32e9  # Symbol rate [Hz]
@@ -94,7 +94,7 @@ class Line:
 
     def nli_generation(self, power_per_channel):
         bn = 12.5e9  # Noise bandwidth
-        eta_nli = ((16 / (27 * pi)) * log10(((pi ** 2) / 2) *
+        eta_nli = ((16 / (27 * pi)) * log(((pi ** 2) / 2) *
                    ((self.beta2 * (self.rs ** 2)) / self.alpha) *
                    (self.n_channels ** (2 * (self.rs / self.df)))) *
                    ((self.gamma ** 2) / (4 * self.alpha * self.beta2)) * (1 / (self.rs ** 3)))
@@ -119,13 +119,13 @@ class Line:
         return signal_information
 
     def optimized_launch_power(self):
-        eta_nli = ((16 / (27 * pi)) * log10(((pi ** 2) / 2) *
-                                            ((self.beta2 * (self.rs ** 2)) / self.alpha) *
-                                            (self.n_channels ** (2 * (self.rs / self.df)))) *
+        eta_nli = ((16 / (27 * pi)) * log(((pi ** 2) / 2) *
+                                          ((self.beta2 * (self.rs ** 2)) / self.alpha) *
+                                          (self.n_channels ** (2 * (self.rs / self.df)))) *
                    ((self.gamma ** 2) / (4 * self.alpha * self.beta2)) * (1 / (self.rs ** 3)))
         nf = db2lin(self.noise_figure)  # in linear
         f0 = 193.414e12  # C-band frequency
-        loss = self.alpha * self.length
+        loss = db2lin(self.alpha_db * 80e3)  # 80e3 is fiber span loss
         p_opt = cbrt((nf * loss * h * f0) / (2 * eta_nli))
         return p_opt
 
@@ -383,7 +383,7 @@ class Network:
 
         self.update_route_space()
 
-    def path_available(self, path, channel=0):  # Modified for receiving the channel number or -1 if no channel
+    def path_available(self, path, channel=0):  # Modified for returning the channel number or -1 if no channel
         line_labels = []
         for i in range(len(path) - 1):
             line_labels.append(path[i] + path[i + 1])
@@ -405,7 +405,7 @@ class Network:
             line = self.lines[line_label]
             line.state[channel] = 'occupied'
 
-    def free_path(self, path, channel=0):  # Free every line of the path forcedly                   (unused)
+    def free_path(self, path, channel=0):  # Free every line of the path forcedly
         line_labels = []
         for i in range(len(path) - 1):
             line_labels.append(path[i] + path[i + 1])
